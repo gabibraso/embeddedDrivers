@@ -1,15 +1,14 @@
 /*
- * lcd_driver.c
- *
- * Created: 7/31/2018 10:24:50 AM
- *  Author: gabriel.brasoveanu
- */ 
+* lcd_driver.c
+*
+* Created: 7/31/2018 10:24:50 AM
+*  Author: gabriel.brasoveanu
+*/
 
 #include "spi_driver.h"
 #include "lcd_driver.h"
 #include <avr/io.h>
-#include <avr/delay.h>
-#include <avr/pgmspace.h>
+
 
 static const uint8_t Font[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00,
@@ -269,315 +268,98 @@ static const uint8_t Font[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
-void lcdPortInit(volatile uint8_t *portLcd, unsigned char RSPin, unsigned char DCPin)
+
+
+void lcdSendDataByPolling(uint8_t data)
+{
+	// Put D/C HIGH (sending data)
+	*(lcdInit.lcdPort) |= (1<<lcdInit.DCPin);
+	// Put SS to LOW (select this device)
+	*(spiStruct.spiPort) &= ~(1<<spiStruct.SSPin);
+	// Send data
+	spiTransmitByPolling(data);
+	// Put SS to HIGH (deselect this device)
+	*(spiStruct.spiPort) |= (1<<spiStruct.SSPin);
+}
+
+void lcdSendCommandByPolling(uint8_t data)
+{
+	// Put D/C LOW (sending command)
+	*(lcdInit.lcdPort) &= ~(1<<lcdInit.DCPin);
+	// Put SS to LOW (select this device)
+	*(spiStruct.spiPort) &= ~(1<<spiStruct.SSPin);
+	// Send data
+	spiTransmitByPolling(data);
+	// Put SS to HIGH (deselect this device)
+	*(spiStruct.spiPort) |= (1<<spiStruct.SSPin);
+}
+
+void lcdSendDataByInterrupt(uint8_t *dataToTransmit, uint8_t *dataToReceive, uint8_t numberOfBytes)
+{
+	// Put D/C HIGH (sending data)
+	*(lcdInit.lcdPort) |= (1<<lcdInit.DCPin);
+	// Send data
+	spiTransmitByInterrupt(dataToTransmit,dataToReceive,numberOfBytes);
+}
+
+void lcdSendCommandByInterrupt(uint8_t *dataToTransmit, uint8_t *dataToReceive, uint8_t numberOfBytes)
+{
+	// Put D/C LOW (sending command)
+	*(lcdInit.lcdPort) &= ~(1<<lcdInit.DCPin);
+	// Send data
+	spiTransmitByInterrupt(dataToTransmit,dataToReceive,numberOfBytes);
+	
+}
+
+void lcdInitialize(volatile uint8_t *portLcd, unsigned char RSPin, unsigned char DCPin)
 {
 	lcdInit.lcdPort = portLcd;
 	lcdInit.DCPin = DCPin;
 	lcdInit.RSPin = RSPin;
 	
+
 	//DDR - set DDR and make RS, D/C output pin
 	*(lcdInit.lcdPort-1) |= (1<<lcdInit.DCPin) | (1<<lcdInit.DCPin);
 	*(lcdInit.lcdPort) &= ~((1<<lcdInit.RSPin) | (1<<lcdInit.DCPin));
-}
-
-void spiWrite(uint8_t data)
-{
-	SPDR = data;
-	while((SPSR & (1<<SPIF)) ==0);
-}
-
-void spiSendData(uint8_t data)
-{
-	// Put D/C HIGH (sending data)
-	*(lcdInit.lcdPort) |= (1<<lcdInit.DCPin);
-	// Put SS to LOW (select this device)
-	*(spiInit.spiPort) &= ~(1<<spiInit.SSPin);
-	// Send data
-	spiWrite(data);
-	// Put SS to HIGH (deselect this device)
-	*(spiInit.spiPort) |= (1<<spiInit.SSPin);
-}
-
-void spiSendCommand(uint8_t data)
-{
-	// Put D/C LOW (sending command)
-	*(lcdInit.lcdPort) &= ~(1<<lcdInit.DCPin);
-	// Put SS to LOW (select this device)
-	*(spiInit.spiPort) &= ~(1<<spiInit.SSPin);
-	// Send data
-	spiWrite(data);
-	// Put SS to HIGH (deselect this device)
-	*(spiInit.spiPort) |= (1<<spiInit.SSPin);
-}
-
-
-
-void Initialize_LCD(void)
-{
+	
+	
 	//Reset the LCD controller
 	*(lcdInit.lcdPort) &= ~(1<<lcdInit.RSPin);
 	_delay_us(10);
 	*(lcdInit.lcdPort) |= (1<<lcdInit.RSPin);
 	_delay_ms(120);
 
-	//SLPOUT (11h): Sleep Out ("Sleep Out"  is chingrish for "wake")
+	//SLPOUT (11h): Sleep Out ("Sleep Out"  is for "wake")
 	//The DC/DC converter is enabled, Internal display oscillator
 	//is started, and panel scanning is started.
-	spiSendCommand(SLPOUT);
+	
+	lcdTxCommands[0] = SLPOUT;
+	lcdSendCommandByInterrupt(&lcdTxCommands[0],NULL,1);
 	_delay_ms(120);
 
-	//FRMCTR1 (B1h): Frame Rate Control (In normal mode/ Full colors)
-	//Set the frame frequency of the full colors normal mode.
-	// * Frame rate=fosc/((RTNA + 20) x (LINE + FPA + BPA))
-	// * 1 < FPA(front porch) + BPA(back porch) ; Back porch ?0
-	//Note: fosc = 333kHz
-	spiSendCommand(FRMCTR1);//In normal mode(Full colors)
-	spiSendData(0x02);//RTNB: set 1-line period
-	spiSendData(0x35);//FPB:  front porch
-	spiSendData(0x36);//BPB:  back porch
-
-	//FRMCTR2 (B2h): Frame Rate Control (In Idle mode/ 8-colors)
-	//Set the frame frequency of the Idle mode.
-	// * Frame rate=fosc/((RTNB + 20) x (LINE + FPB + BPB))
-	// * 1 < FPB(front porch) + BPB(back porch) ; Back porch ?0
-	//Note: fosc = 333kHz
-	spiSendCommand(FRMCTR2);//In Idle mode (8-colors)
-	spiSendData(0x02);//RTNB: set 1-line period
-	spiSendData(0x35);//FPB:  front porch
-	spiSendData(0x36);//BPB:  back porch
-
-	//FRMCTR3 (B3h): Frame Rate Control (In Partial mode/ full colors)
-	//Set the frame frequency of the Partial mode/ full colors.
-	// * 1st parameter to 3rd parameter are used in line inversion mode.
-	// * 4th parameter to 6th parameter are used in frame inversion mode.
-	// * Frame rate=fosc/((RTNC + 20) x (LINE + FPC + BPC))
-	// * 1 < FPC(front porch) + BPC(back porch) ; Back porch ?0
-	//Note: fosc = 333kHz
-	spiSendCommand(FRMCTR3);//In partial mode + Full colors
-	spiSendData(0x02);//RTNC: set 1-line period
-	spiSendData(0x35);//FPC:  front porch
-	spiSendData(0x36);//BPC:  back porch
-	spiSendData(0x02);//RTND: set 1-line period
-	spiSendData(0x35);//FPD:  front porch
-	spiSendData(0x36);//BPD:  back porch
-
+	
+	lcdTxCommands[1] = INVCTR;
+	lcdTxData[0] = 0x07; // Frame Inversion in all mode
 	//INVCTR (B4h): Display Inversion Control
-	spiSendCommand(INVCTR);
-	spiSendData(0x07);
+	lcdSendCommandByInterrupt(&lcdTxCommands[1],NULL,1);
+	lcdSendDataByInterrupt(&lcdTxData[0],NULL,1);
 	// 0000 0ABC
 	// |||| ||||-- NLC: Inversion setting in full Colors partial mode
 	// |||| |||         (0=Line Inversion, 1 = Frame Inversion)
 	// |||| |||--- NLB: Inversion setting in idle mode
 	// |||| ||          (0=Line Inversion, 1 = Frame Inversion)
 	// |||| ||---- NLA: Inversion setting in full Colors normal mode
+	// |||| |           (0=Line Inversion, 1 = Frame Inversion)
 	// |||| |----- Unused: 0
 
-	//PWCTR1 (C0h): Power Control 1
-	spiSendCommand(PWCTR1);
-	spiSendData(0x02);// VRH[4:0] (0-31) Sets GVDD
-	// VRH=0x00 => GVDD=5.0v
-	// VRH=0x1F => GVDD=3.0v
-	// Each tick is a variable step:
-	// VRH[4:0] |  VRH | GVDD
-	//   00000b | 0x00 | 5.00v
-	//   00001b | 0x01 | 4.75v
-	//   00010b | 0x02 | 4.70v <<<<<
-	//   00011b | 0x03 | 4.65v
-	//   00100b | 0x04 | 4.60v
-	//   00101b | 0x05 | 4.55v
-	//   00110b | 0x06 | 4.50v
-	//   00111b | 0x07 | 4.45v
-	//   01000b | 0x08 | 4.40v
-	//   01001b | 0x09 | 4.35v
-	//   01010b | 0x0A | 4.30v
-	//   01011b | 0x0B | 4.25v
-	//   01100b | 0x0C | 4.20v
-	//   01101b | 0x0D | 4.15v
-	//   01110b | 0x0E | 4.10v
-	//   01111b | 0x0F | 4.05v
-	//   10000b | 0x10 | 4.00v
-	//   10001b | 0x11 | 3.95v
-	//   10010b | 0x12 | 3.90v
-	//   10011b | 0x13 | 3.85v
-	//   10100b | 0x14 | 3.80v
-	//   10101b | 0x15 | 3.75v
-	//   10110b | 0x16 | 3.70v
-	//   10111b | 0x17 | 3.65v
-	//   11000b | 0x18 | 3.60v
-	//   11001b | 0x19 | 3.55v
-	//   11010b | 0x1A | 3.50v
-	//   11011b | 0x1B | 3.45v
-	//   11100b | 0x1C | 3.40v
-	//   11101b | 0x1D | 3.35v
-	//   11110b | 0x1E | 3.25v
-	//   11111b | 0x1F | 3.00v
-	spiSendData(0x02);// 010i i000
-	// |||| ||||-- Unused: 0
-	// |||| |----- IB_SEL0:
-	// ||||------- IB_SEL1:
-	// |||-------- Unused: 010
-	// IB_SEL[1:0] | IB_SEL | AVDD
-	//         00b | 0x00   | 2.5µA   <<<<<
-	//         01b | 0x01   | 2.0µA
-	//         10b | 0x02   | 1.5µA
-	//         11b | 0x03   | 1.0µA
-
-	//PWCTR2 (C1h): Power Control 2
-	// * Set the VGH and VGL supply power level
-	//Restriction: VGH-VGL <= 32V
-	spiSendCommand(PWCTR2);
-	spiSendData(0xC5);// BT[2:0] (0-15) Sets GVDD
-	// BT[2:0] |    VGH      |     VGL
-	//    000b | 4X |  9.80v | -3X |  -7.35v
-	//    001b | 4X |  9.80v | -4X |  -9.80v
-	//    010b | 5X | 12.25v | -3X |  -7.35v
-	//    011b | 5X | 12.25v | -4X |  -9.80v
-	//    100b | 5X | 12.25v | -5X | -12.25v
-	//    101b | 6X | 14.70v | -3X |  -7.35v   <<<<<
-	//    110b | 6X | 14.70v | -4X |  -9.80v
-	//    111b | 6X | 14.70v | -5X | -12.25v
-
-	//PWCTR3 (C2h): Power Control 3 (in Normal mode/ Full colors)
-	// * Set the amount of current in Operational amplifier in
-	//   normal mode/full colors.
-	// * Adjust the amount of fixed current from the fixed current
-	//   source in the operational amplifier for the source driver.
-	// * Set the Booster circuit Step-up cycle in Normal mode/ full
-	//   colors.
-	spiSendCommand(PWCTR3);
-	spiSendData(0x0D);// AP[2:0] Sets Operational Amplifier Bias Current
-	// AP[2:0] | Function
-	//    000b | Off
-	//    001b | Small
-	//    010b | Medium Low
-	//    011b | Medium
-	//    100b | Medium High
-	//    101b | Large          <<<<<
-	//    110b | reserved
-	//    111b | reserved
-	spiSendData(0x00);// DC[2:0] Booster Frequency
-	// DC[2:0] | Circuit 1 | Circuit 2,4
-	//    000b | BCLK / 1  | BCLK / 1  <<<<<
-	//    001b | BCLK / 1  | BCLK / 2
-	//    010b | BCLK / 1  | BCLK / 4
-	//    011b | BCLK / 2  | BCLK / 2
-	//    100b | BCLK / 2  | BCLK / 4
-	//    101b | BCLK / 4  | BCLK / 4
-	//    110b | BCLK / 4  | BCLK / 8
-	//    111b | BCLK / 4  | BCLK / 16
-
-	//PWCTR4 (C3h): Power Control 4 (in Idle mode/ 8-colors)
-	// * Set the amount of current in Operational amplifier in
-	//   normal mode/full colors.
-	// * Adjust the amount of fixed current from the fixed current
-	//   source in the operational amplifier for the source driver.
-	// * Set the Booster circuit Step-up cycle in Normal mode/ full
-	//   colors.
-	spiSendCommand(PWCTR4);
-	spiSendData(0x8D);// AP[2:0] Sets Operational Amplifier Bias Current
-	// AP[2:0] | Function
-	//    000b | Off
-	//    001b | Small
-	//    010b | Medium Low
-	//    011b | Medium
-	//    100b | Medium High
-	//    101b | Large          <<<<<
-	//    110b | reserved
-	//    111b | reserved
-	spiSendData(0x1A);// DC[2:0] Booster Frequency
-	// DC[2:0] | Circuit 1 | Circuit 2,4
-	//    000b | BCLK / 1  | BCLK / 1
-	//    001b | BCLK / 1  | BCLK / 2
-	//    010b | BCLK / 1  | BCLK / 4  <<<<<
-	//    011b | BCLK / 2  | BCLK / 2
-	//    100b | BCLK / 2  | BCLK / 4
-	//    101b | BCLK / 4  | BCLK / 4
-	//    110b | BCLK / 4  | BCLK / 8
-	//    111b | BCLK / 4  | BCLK / 16
-
-	//PPWCTR5 (C4h): Power Control 5 (in Partial mode/ full-colors)
-	// * Set the amount of current in Operational amplifier in
-	//   normal mode/full colors.
-	// * Adjust the amount of fixed current from the fixed current
-	//   source in the operational amplifier for the source driver.
-	// * Set the Booster circuit Step-up cycle in Normal mode/ full
-	//   colors.
-	spiSendCommand(PWCTR5);
-	spiSendData(0x8D);// AP[2:0] Sets Operational Amplifier Bias Current
-	// AP[2:0] | Function
-	//    000b | Off
-	//    001b | Small
-	//    010b | Medium Low
-	//    011b | Medium
-	//    100b | Medium High
-	//    101b | Large          <<<<<
-	//    110b | reserved
-	//    111b | reserved
-	spiSendData(0xEE);// DC[2:0] Booster Frequency
-	// DC[2:0] | Circuit 1 | Circuit 2,4
-	//    000b | BCLK / 1  | BCLK / 1
-	//    001b | BCLK / 1  | BCLK / 2
-	//    010b | BCLK / 1  | BCLK / 4
-	//    011b | BCLK / 2  | BCLK / 2
-	//    100b | BCLK / 2  | BCLK / 4
-	//    101b | BCLK / 4  | BCLK / 4
-	//    110b | BCLK / 4  | BCLK / 8  <<<<<
-	//    111b | BCLK / 4  | BCLK / 16
-
-	//VMCTR1 (C5h): VCOM Control 1
-	spiSendCommand(VMCTR1);
-	spiSendData(0x51);// Default: 0x51 => +4.525
-	// VMH[6:0] (0-100) Sets VCOMH
-	// VMH=0x00 => VCOMH= +2.5v
-	// VMH=0x64 => VCOMH= +5.0v
-	spiSendData(0x4D);// Default: 0x4D => -0.575
-	// VML[6:0] (4-100) Sets VCOML
-	// VML=0x04 => VCOML= -2.4v
-	// VML=0x64 => VCOML=  0.0v
-
-	//GMCTRP1 (E0h): Gamma ‘+’polarity Correction Characteristics Setting
-	spiSendCommand(GAMCTRP1);
-	spiSendData(0x0a);
-	spiSendData(0x1c);
-	spiSendData(0x0c);
-	spiSendData(0x14);
-	spiSendData(0x33);
-	spiSendData(0x2b);
-	spiSendData(0x24);
-	spiSendData(0x28);
-	spiSendData(0x27);
-	spiSendData(0x25);
-	spiSendData(0x2C);
-	spiSendData(0x39);
-	spiSendData(0x00);
-	spiSendData(0x05);
-	spiSendData(0x03);
-	spiSendData(0x0d);
-
-	//GMCTRN1 (E1h): Gamma ‘-’polarity Correction Characteristics Setting
-	spiSendCommand(GAMCTRN1);
-	spiSendData(0x0a);
-	spiSendData(0x1c);
-	spiSendData(0x0c);
-	spiSendData(0x14);
-	spiSendData(0x33);
-	spiSendData(0x2b);
-	spiSendData(0x24);
-	spiSendData(0x28);
-	spiSendData(0x27);
-	spiSendData(0x25);
-	spiSendData(0x2D);
-	spiSendData(0x3a);
-	spiSendData(0x00);
-	spiSendData(0x05);
-	spiSendData(0x03);
-	spiSendData(0x0d);
 
 	//COLMOD (3Ah): Interface Pixel Format
 	// * This command is used to define the format of RGB picture
 	//   data, which is to be transferred via the MCU interface.
-	spiSendCommand(COLMOD);
-	spiSendData(0x06);// Default: 0x06 => 18-bit/pixel
+	lcdTxCommands[2] = COLMOD;
+	lcdTxData[1] = 0x06;// Default: 0x06 => 18-bit/pixel
+	lcdSendCommandByInterrupt(&lcdTxCommands[2],NULL,1);
+	lcdSendDataByInterrupt(&lcdTxData[1],NULL,1);
 	// IFPF[2:0] MCU Interface Color Format
 	// IFPF[2:0] | Format
 	//      000b | reserved
@@ -595,12 +377,15 @@ void Initialize_LCD(void)
 	// * This command makes no change of contents of frame memory.
 	// * This command does not change any other status.
 	// * The delay time between DISPON and DISPOFF needs 120ms at least
-	spiSendCommand(DISPON);//Display On
+	lcdTxCommands[3] = DISPON;
+	lcdSendCommandByInterrupt(&lcdTxCommands[3],NULL,1);//Display On
 	_delay_ms(1);
 
 	//MADCTL (36h): Memory Data Access Control
-	spiSendCommand(MADCTL);
-	spiSendData(0xC0);// YXVL RH--
+	lcdTxCommands[4] = MADCTL;
+	lcdTxData[2] = 0xD0;
+	lcdSendCommandByInterrupt(&lcdTxCommands[4],NULL,1);
+	lcdSendDataByInterrupt(&lcdTxData[2],NULL,1);// YXVL RH--
 	// |||| ||||-- Unused: 0
 	// |||| ||---- MH: Horizontal Refresh Order
 	// |||| |        0 = left to right
@@ -614,101 +399,99 @@ void Initialize_LCD(void)
 	// |||-------- MV: Row / Column Exchange
 	// ||--------- MX: Column Address Order  <<<<<
 	// |---------- MY: Row Address Order
+	// MY MX MV
+	// 1  0  1 -- right -> down
+	// 1  1  0 -- up -> down
+	// 0  0  0 -- down -> up
+	// 0  1  1 -- left -> down
 
 }
 
-void Set_LCD_for_write_at_X_Y(uint8_t xStart, uint8_t yStart, uint8_t xStop, uint8_t yStop )
+void SetLcdCursor(uint8_t xStart, uint8_t yStart, uint8_t xStop, uint8_t yStop )
 {
-	spiSendCommand(CASET); //Column address set
+	lcdTxCommands[5] = CASET;
+	lcdTxCommands[6] = RASET;
+	lcdTxCommands[7] = RAMWR;
+	lcdTxData[3] = xStart;
+	lcdTxData[4] = xStop;
+	lcdTxData[5] = yStart;
+	lcdTxData[6] = yStop;
+	lcdTxData[7] = 0x00;
+	lcdSendCommandByInterrupt(&lcdTxCommands[5],NULL,1); //Column address set
 	//Write the parameters for the "column address set" command
-	spiSendData(0x00);     //Start MSB = XS[15:8]
-	spiSendData(xStart); //Start LSB = XS[ 7:0]
-	spiSendData(0x00);     //End MSB   = XE[15:8]
-	spiSendData(xStop);     //End LSB   = XE[ 7:0]
+	lcdSendDataByInterrupt(&lcdTxData[5],NULL,1);		//Start MSB = XS[15:8]
+	lcdSendDataByInterrupt(&lcdTxData[3],NULL,1);		//Start LSB = XS[ 7:0]
+	lcdSendDataByInterrupt(&lcdTxData[5],NULL,1);		//End MSB   = XE[15:8]
+	lcdSendDataByInterrupt(&lcdTxData[4],NULL,1);		//End LSB   = XE[ 7:0]
 	
-	spiSendCommand(RASET); //Row address set
+	lcdSendCommandByInterrupt(&lcdTxCommands[6],NULL,1); //Row address set
 	//Write the parameters for the "row address set" command
-	spiSendData(0x00);     //Start MSB = YS[15:8]
-	spiSendData(yStart); //Start LSB = YS[ 7:0]
-	spiSendData(0x00);     //End MSB   = YE[15:8]
-	spiSendData(yStop);     //End LSB   = YE[ 7:0]
+	lcdSendDataByInterrupt(&lcdTxData[5],NULL,1);       //Start MSB = YS[15:8]
+	lcdSendDataByInterrupt(&lcdTxData[5],NULL,1);		//Start LSB = YS[ 7:0]
+	lcdSendDataByInterrupt(&lcdTxData[5],NULL,1);       //End MSB   = YE[15:8]
+	lcdSendDataByInterrupt(&lcdTxData[6],NULL,1);       //End LSB   = YE[ 7:0]
 	
 	//Write the "write data" command to the LCD
 	//RAMWR (2Ch): Memory Write
-	spiSendCommand(RAMWR); //write data
+	lcdSendCommandByInterrupt(&lcdTxCommands[7],NULL,1); //write data
 }
 
-void fillLCD(uint32_t color)
+void fillLCD(uint32_t *color)
 {
-	register int
-	i;
-	Set_LCD_for_write_at_X_Y(0,0,130,130);
+	register int i;
+	SetLcdCursor(0,0,LCD_HEIGHT,LCD_WIDTH);
 
 	//Fill display with a given RGB value
-	for (i =0; i < (130 * 132); i++)
+	for (i =0; i < (LCD_WIDTH * LCD_HEIGHT); i++)
 	{
-		spiSendData(color);
-		spiSendData(color >> 8);
-		spiSendData(color >> 16);
+		lcdSendDataByInterrupt(color,NULL,3);
 	}
 }
 
-void pushColor(uint32_t color)
+void drawHorizontalLine(uint8_t x, uint8_t y, uint8_t w, uint32_t *color)
 {
-	spiSendData(color);
-	spiSendData(color >> 8);
-	spiSendData(color >> 16);
-}
-
-void drawPixel(uint8_t x, uint8_t y, uint32_t color)
-{
-	Set_LCD_for_write_at_X_Y(x,y,x+1,y+1);
-	spiSendData(color);
-	spiSendData(color >> 8);
-	spiSendData(color >> 16);
-}
-
-void drawHorizontalLine(uint8_t x, uint8_t y, uint8_t w, uint32_t color)
-{
-	Set_LCD_for_write_at_X_Y(x, y, x+w-1, y);
+	
+	SetLcdCursor(x, y, x+w-1, y);
 	while(w--)
 	{
-		spiSendData(color);
-		spiSendData(color >> 8);
-		spiSendData(color >> 16);
+		lcdSendDataByInterrupt(color,NULL,3);
 	}
 }
 
-void drawVerticalLine(uint8_t x, uint8_t y, uint8_t h, uint32_t color)
+void drawVerticalLine(uint8_t x, uint8_t y, uint8_t h, uint32_t *color)
 {
-	Set_LCD_for_write_at_X_Y(x, y, x, y+h-1);
+	SetLcdCursor(x, y, x, y+h-1);
 	while(h--)
 	{
-		spiSendData(color);
-		spiSendData(color >> 8);
-		spiSendData(color >> 16);
+		lcdSendDataByInterrupt(color,NULL,3);
 	}
 }
 
-void drawRect (uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint32_t color) {
+void drawRect (uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint32_t *color) {
 	drawHorizontalLine(x, y, w, color);
 	drawHorizontalLine(x, y+h-1, w, color);
 	drawVerticalLine(x, y, h, color);
 	drawVerticalLine(x+w-1, y, h, color);
 }
 
-void drawCircle(uint8_t x0, uint8_t y0, uint8_t r, uint32_t color)
- {
+void drawPixel(uint8_t x, uint8_t y, uint32_t *color)
+{
+	SetLcdCursor(x,y,x+1,y+1);
+	lcdSendDataByInterrupt(color,NULL,3);
+}
+
+void drawCircle(uint8_t xStart, uint8_t yStart, uint8_t r, uint32_t *color)
+{
 	int8_t f = 1 - r;
 	int8_t ddF_x = 1;
 	int8_t ddF_y = -2 * r;
 	int8_t x = 0;
 	int8_t y = r;
 
-	drawPixel(x0  , y0+r, color);
-	drawPixel(x0  , y0-r, color);
-	drawPixel(x0+r, y0  , color);
-	drawPixel(x0-r, y0  , color);
+	drawPixel(xStart  , yStart+r, color);
+	drawPixel(xStart  , yStart-r, color);
+	drawPixel(xStart+r, yStart  , color);
+	drawPixel(xStart-r, yStart  , color);
 
 	while (x<y) {
 		if (f >= 0) {
@@ -720,25 +503,25 @@ void drawCircle(uint8_t x0, uint8_t y0, uint8_t r, uint32_t color)
 		ddF_x += 2;
 		f += ddF_x;
 		
-		drawPixel(x0 + x, y0 + y, color);
-		drawPixel(x0 - x, y0 + y, color);
-		drawPixel(x0 + x, y0 - y, color);
-		drawPixel(x0 - x, y0 - y, color);
-		drawPixel(x0 + y, y0 + x, color);
-		drawPixel(x0 - y, y0 + x, color);
-		drawPixel(x0 + y, y0 - x, color);
-		drawPixel(x0 - y, y0 - x, color);
+		drawPixel(xStart + x, yStart + y, color);
+		drawPixel(xStart - x, yStart + y, color);
+		drawPixel(xStart + x, yStart - y, color);
+		drawPixel(xStart - x, yStart - y, color);
+		drawPixel(xStart + y, yStart + x, color);
+		drawPixel(xStart - y, yStart + x, color);
+		drawPixel(xStart + y, yStart - x, color);
+		drawPixel(xStart - y, yStart - x, color);
 	}
 }
 
-void fillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint32_t color) {
+void fillRect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint32_t *color) {
 	
 	for (uint8_t i=x; i<x+w; i++) {
 		drawVerticalLine(i, y, h, color);
 	}
 }
-	
-void drawCharS(uint8_t x, uint8_t y, char c, uint32_t textColor, uint32_t bgColor, uint8_t size){
+
+void drawCharS(uint8_t x, uint8_t y, char c, uint32_t *textColor, uint32_t *bgColor, uint8_t size){
 	uint8_t line; // vertical column of pixels of character in font
 	uint8_t i, j;
 	
@@ -766,15 +549,15 @@ void drawCharS(uint8_t x, uint8_t y, char c, uint32_t textColor, uint32_t bgColo
 	}
 }
 
-uint8_t drawString(uint8_t x, uint8_t y, char *pt, uint32_t textColor, uint32_t bgColor, uint8_t characterSize){
+uint8_t drawString(uint8_t x, uint8_t y, char *pt, uint32_t *textColor, uint32_t *bgColor, uint8_t characterSize){
 
 	// If the text has reached the maximum point on the Y axis return 0
 	// Maximum point on the Y axis is 128 - characterSize*6
-	if(characterSize*6+y>128) return 0;
+	if(characterSize*6+y>128) return 1;
 	
 	// If the text has reached the maximum point on the X axis return 0
 	// Maximum point on the X axis is 128 - characterSize*6*numberOfCharacters
-	if(characterSize*6*strlen(pt)+x>128) return 0;
+	if(characterSize*6*strlen(pt)+x>128) return 1;
 	
 	while(*pt){
 		// Print first character
@@ -783,7 +566,7 @@ uint8_t drawString(uint8_t x, uint8_t y, char *pt, uint32_t textColor, uint32_t 
 		// Move to the next x point
 		x = x+characterSize*6;
 	}
-	
+	return 0;
 }
 
 
